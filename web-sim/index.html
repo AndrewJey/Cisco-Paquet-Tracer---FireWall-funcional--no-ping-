@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cisco Firewall ACL — Simulador No-Ping</title>
+  <style>
+    :root { --bg:#f4f7fb; --card:#fff; --text:#102033; --muted:#5a6b80; --border:#d7e0ec; --primary:#0d5ca8; --ok:#16a34a; --bad:#dc2626; }
+    [data-theme="dark"] { --bg:#0a111f; --card:#131e33; --text:#eef4fb; --muted:#97abc5; --border:#253755; --primary:#55a8ff; --ok:#22c55e; --bad:#f87171; }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:system-ui,-apple-system,sans-serif; background:var(--bg); color:var(--text); transition:background .2s,color .2s; }
+    .wrap { max-width:1050px; margin:0 auto; padding:22px 16px 64px; }
+    .top { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:12px; margin-bottom:18px; }
+    .grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+    @media (max-width:820px) { .grid { grid-template-columns:1fr; } }
+    .card { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:18px; margin-bottom:16px; }
+    .row { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:8px; margin-bottom:10px; }
+    input, select, button { font:inherit; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:var(--bg); color:var(--text); min-width:0; }
+    button { cursor:pointer; font-weight:600; }
+    .btn-primary { background:var(--primary); color:#fff; border-color:transparent; }
+    .btn-danger { background:var(--bad); color:#fff; border-color:transparent; }
+    pre { background:#0b1322; color:#d7e8ff; padding:14px; border-radius:10px; overflow:auto; font-size:13px; }
+    .badge { display:inline-block; padding:3px 10px; border-radius:999px; font-size:12px; font-weight:700; color:#fff; }
+    .badge.ok { background:var(--ok); } .badge.bad { background:var(--bad); }
+    table { width:100%; border-collapse:collapse; font-size:13.5px; }
+    th, td { padding:8px; border-bottom:1px solid var(--border); text-align:left; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top">
+      <div>
+        <h1 style="margin:0;">🛡️ Firewall Cisco ACL — Simulador No-Ping</h1>
+        <div style="color:var(--muted);font-size:14px;">Compañero interactivo de <code>EJEMPLO.pkt</code>: evalúa reglas ACL y exporta CLI de Cisco IOS</div>
+      </div>
+      <button type="button" id="themeBtn">🌙 Oscuro</button>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h3 style="margin-top:0;">Probar paquete</h3>
+        <div class="row">
+          <select id="pktProto" aria-label="Protocolo"><option value="icmp">ICMP (Ping)</option><option value="tcp">TCP</option><option value="udp">UDP</option><option value="ip">IP</option></select>
+          <input id="pktSrc" value="192.168.1.10" aria-label="IP origen" />
+          <input id="pktDst" value="10.0.0.5" aria-label="IP destino" />
+          <input id="pktPort" value="echo" aria-label="Puerto o tipo ICMP" />
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
+          <button type="button" id="testBtn" class="btn-primary">▶ Evaluar</button>
+          <button type="button" data-preset="ping">Ping</button>
+          <button type="button" data-preset="https">HTTPS 443</button>
+          <button type="button" data-preset="ssh">SSH 22</button>
+        </div>
+        <div id="resultBox" aria-live="polite"></div>
+      </div>
+
+      <div class="card">
+        <h3 style="margin-top:0;">Agregar regla (se inserta al inicio)</h3>
+        <form id="ruleForm">
+          <div class="row">
+            <select id="rAction" aria-label="Acción"><option value="deny">deny</option><option value="permit">permit</option></select>
+            <select id="rProto" aria-label="Protocolo"><option value="icmp">icmp</option><option value="tcp">tcp</option><option value="udp">udp</option><option value="ip">ip</option></select>
+            <input id="rSrc" value="any" aria-label="Origen (any o CIDR)" />
+            <input id="rDst" value="any" aria-label="Destino (any o CIDR)" />
+            <input id="rPort" value="echo" aria-label="Puerto" />
+          </div>
+          <div class="row">
+            <input id="rComment" placeholder="Descripción de la regla" />
+            <button type="submit" class="btn-primary">+ Añadir</button>
+            <button type="button" id="resetBtn">↺ Restaurar No-Ping</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0;">Reglas activas (orden secuencial + deny implícito)</h3>
+      <div style="overflow-x:auto;">
+        <table>
+          <thead><tr><th>#</th><th>Acción</th><th>Proto</th><th>Origen</th><th>Destino</th><th>Puerto</th><th>Nota</th><th></th></tr></thead>
+          <tbody id="rulesTbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+        <h3 style="margin:0;">Configuración Cisco IOS generada</h3>
+        <button type="button" id="copyIosBtn">📋 Copiar CLI</button>
+      </div>
+      <pre id="iosPre"></pre>
+    </div>
+  </div>
+  <script src="./acl-engine.js"></script>
+  <script>
+    (function () {
+      var E = window.CiscoAclEngine;
+      var KEY = 'cisco_acl_rules_v1', TKEY = 'cisco_acl_theme';
+      var rules;
+      try { rules = JSON.parse(localStorage.getItem(KEY) || 'null') || E.DEFAULT_RULES.slice(); } catch (e) { rules = E.DEFAULT_RULES.slice(); }
+      function save() { try { localStorage.setItem(KEY, JSON.stringify(rules)); } catch (e) {} }
+      function $(id) { return document.getElementById(id); }
+      function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c]; }); }
+      function setTheme(t) {
+        document.documentElement.setAttribute('data-theme', t);
+        try { localStorage.setItem(TKEY, t); } catch (e) {}
+        $('themeBtn').textContent = t === 'dark' ? '☀️ Claro' : '🌙 Oscuro';
+      }
+      setTheme(localStorage.getItem(TKEY) === 'dark' ? 'dark' : 'light');
+      $('themeBtn').addEventListener('click', function () { setTheme(document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark'); });
+
+      function runTest() {
+        var res = E.evaluatePacket(rules, { protocol: $('pktProto').value, src: $('pktSrc').value, dst: $('pktDst').value, port: $('pktPort').value });
+        $('resultBox').innerHTML = '<span class="badge ' + (res.allowed ? 'ok' : 'bad') + '">' + (res.allowed ? 'PERMITIDO' : 'BLOQUEADO') + '</span> ' +
+          '<span style="font-size:13.5px;color:var(--muted);">' +
+          (res.implicitDeny ? 'Bloqueado por el deny ip any any implícito.' : 'Coincidió con la regla #' + res.matchedRuleIndex + ': ' + esc(res.matchedRule.comment || res.matchedRule.action)) + '</span>';
+      }
+      function render() {
+        $('rulesTbody').innerHTML = rules.map(function (r, i) {
+          return '<tr><td>' + (i + 1) + '</td><td><span class="badge ' + (r.action === 'permit' ? 'ok' : 'bad') + '">' + esc(r.action) + '</span></td>' +
+            '<td>' + esc(r.protocol) + '</td><td>' + esc(r.src) + '</td><td>' + esc(r.dst) + '</td><td>' + esc(r.port) + '</td><td>' + esc(r.comment) + '</td>' +
+            '<td><button type="button" class="btn-danger" data-del="' + i + '" aria-label="Eliminar regla ' + (i + 1) + '">✕</button></td></tr>';
+        }).join('');
+        $('iosPre').textContent = E.exportCiscoIos(rules);
+        runTest();
+      }
+      $('testBtn').addEventListener('click', runTest);
+      document.querySelectorAll('[data-preset]').forEach(function (b) {
+        b.addEventListener('click', function () {
+          var p = b.getAttribute('data-preset');
+          if (p === 'ping') { $('pktProto').value = 'icmp'; $('pktPort').value = 'echo'; }
+          if (p === 'https') { $('pktProto').value = 'tcp'; $('pktPort').value = '443'; }
+          if (p === 'ssh') { $('pktProto').value = 'tcp'; $('pktPort').value = '22'; }
+          runTest();
+        });
+      });
+      $('ruleForm').addEventListener('submit', function (e) {
+        e.preventDefault();
+        rules.unshift({
+          id: 'r' + Date.now(), action: $('rAction').value, protocol: $('rProto').value,
+          src: $('rSrc').value.trim() || 'any', dst: $('rDst').value.trim() || 'any',
+          port: $('rPort').value.trim() || 'any', comment: $('rComment').value.trim()
+        });
+        save(); render();
+      });
+      $('resetBtn').addEventListener('click', function () { rules = E.DEFAULT_RULES.slice(); save(); render(); });
+      $('rulesTbody').addEventListener('click', function (e) {
+        var b = e.target.closest('[data-del]'); if (!b) return;
+        rules.splice(Number(b.getAttribute('data-del')), 1); save(); render();
+      });
+      $('copyIosBtn').addEventListener('click', function () {
+        if (navigator.clipboard) navigator.clipboard.writeText($('iosPre').textContent);
+      });
+      render();
+    })();
+  </script>
+</body>
+</html>
